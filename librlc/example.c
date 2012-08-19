@@ -178,7 +178,7 @@ int mac_build_pdu(u32 lc_id, u8 **mac_pdu, u32 *mac_pdu_size, u8 **buf, u32 *pdu
 		rlc_umtx = &(rlc_um->umtx);
 		
 		/* get all RLC sdu size in RLC SDU queue */
-		rlc_pdu_size = rlc_um_tx_get_sdu_size(rlc_umtx);
+		rlc_pdu_size = rlc_um_tx_estimate_pdu_size(rlc_umtx);
 	}
 	else if(rlc_entity->type == RLC_ENTITY_TYPE_AM)
 	{
@@ -186,7 +186,7 @@ int mac_build_pdu(u32 lc_id, u8 **mac_pdu, u32 *mac_pdu_size, u8 **buf, u32 *pdu
 		rlc_amtx = &(rlc_am->amtx);
 		
 		/* get all RLC sdu size in RLC SDU queue */
-		rlc_pdu_size = rlc_am_tx_get_sdu_size(rlc_amtx);
+		rlc_pdu_size = rlc_am_tx_estimate_pdu_size(rlc_amtx, NULL);
 	}
 	else
 		return 0;
@@ -613,7 +613,7 @@ int main(int argc, char *argv[])
 		}
 		
 		/* get all RLC sdu size in RLC SDU queue */
-		sdu_size = rlc_am_tx_get_sdu_size(nbrlc_amtx);
+		sdu_size = rlc_am_tx_estimate_pdu_size(nbrlc_amtx, NULL);
 		if(sdu_size == 0)
 			continue;
 		

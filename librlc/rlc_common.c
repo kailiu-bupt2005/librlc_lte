@@ -191,22 +191,31 @@ void rlc_dump_sdu(rlc_sdu_t *sdu)
 	}
 }
 
-void rlc_dump_mem_counter()
+int rlc_dump_mem_counter()
 {
+	int errcnt = 0;
+	
 	ZLOG_INFO("n_alloc_amrx_pdu=%u\n", g_mem_am_pdu_rx_base->alloc_cnt);
 	ZLOG_INFO("n_free_amrx_pdu=%u\n", g_mem_am_pdu_rx_base->free_cnt);
+	errcnt += (g_mem_am_pdu_rx_base->alloc_cnt != g_mem_am_pdu_rx_base->free_cnt);
 	
 	ZLOG_INFO("n_alloc_amtx_pdu=%u\n", g_mem_am_pdu_tx_base->alloc_cnt);
 	ZLOG_INFO("n_free_amtx_pdu=%u\n", g_mem_am_pdu_tx_base->free_cnt);
+	errcnt += (g_mem_am_pdu_tx_base->alloc_cnt != g_mem_am_pdu_tx_base->free_cnt);
 	
 	ZLOG_INFO("n_alloc_am_pdu_seg=%u\n", g_mem_am_pdu_seg_base->alloc_cnt);
 	ZLOG_INFO("n_free_am_pdu_seg=%u\n", g_mem_am_pdu_seg_base->free_cnt);
+	errcnt += (g_mem_am_pdu_seg_base->alloc_cnt != g_mem_am_pdu_seg_base->free_cnt);
 	
 	ZLOG_INFO("n_alloc_sdu=%u\n", g_mem_sdu_base->alloc_cnt);
 	ZLOG_INFO("n_free_sdu=%u\n", g_mem_sdu_base->free_cnt);
+	errcnt += (g_mem_sdu_base->alloc_cnt != g_mem_sdu_base->free_cnt);
 	
 	ZLOG_INFO("n_alloc_um_pdu=%u\n", g_mem_um_pdu_base->alloc_cnt);
 	ZLOG_INFO("n_free_um_pdu=%u\n", g_mem_um_pdu_base->free_cnt);
+	errcnt += (g_mem_um_pdu_base->alloc_cnt != g_mem_um_pdu_base->free_cnt);
+
+	return errcnt;
 }
 /***********************************************************************************/
 /* Function : rlc_serialize_sdu 										           */

@@ -47,13 +47,7 @@
 /*
  -	a SN falls within the reordering window if (VR(UH) ¨C UM_Window_Size) <= SN < VR(UH);
  -	a SN falls outside of the reordering window otherwise.
-*/
-#if 0
-#define RLC_SN_IN_RECODERING_WIN(sn, sn_reodering_high, sn_reodering_low, sn_fs) \
-	(( 0 <= RLC_MOD(sn - sn_reodering_low, sn_fs)) && \
-	(RLC_MOD(sn - sn_reodering_low, sn_fs) < RLC_MOD(sn_reodering_high - sn_reodering_low, sn_fs)))
-#endif
-	
+*/	
 #define RLC_SN_IN_WINDOW(sn, sn_win_high, sn_win_low, sn_fs) \
 	(RLC_MOD(sn - sn_win_low, sn_fs) < RLC_MOD(sn_win_high - sn_win_low, sn_fs))
 	
@@ -62,11 +56,11 @@
 #define RLC_SN_IN_RECEIVING_WIN RLC_SN_IN_WINDOW
 
 #define RLC_SN_LESS(sn_small, sn_large, sn_fs) \
-	(RLC_MOD(sn_large-sn_small, sn_fs) < (sn_fs>>2) && \
+	(RLC_MOD(sn_large-sn_small, sn_fs) < (sn_fs>>1) && \
 	sn_small != sn_large)
 
 #define RLC_SN_LESSTHAN(sn_small, sn_large, sn_fs) \
-	(RLC_MOD(sn_large-sn_small, sn_fs) < (sn_fs>>2))
+	(RLC_MOD(sn_large-sn_small, sn_fs) < (sn_fs>>1))
 
 #define RLC_SN_FS_MAX 1024
 #define RLC_ASSEMBLY_QUEUE_SIZE_MAX 64
@@ -421,7 +415,7 @@ void rlc_sdu_free(rlc_sdu_t *sdu);
 void rlc_dump_sdu(rlc_sdu_t *sdu);
 void rlc_serialize_sdu(u8 *data_ptr, rlc_sdu_t *sdu, u32 length);
 
-void rlc_dump_mem_counter();
+int rlc_dump_mem_counter();
 
 inline u32 rlc_li_len(u32 n_li);
 
@@ -435,7 +429,7 @@ void rlc_tm_init(rlc_entity_tm_t *rlc_tm, void (*free_sdu)(void *, void *));
 int rlc_tm_reestablish(rlc_entity_tm_t *rlctm);
 int rlc_tm_rx_process_pdu(rlc_entity_tm_t *tmrx, u8 *buf_ptr, u32 buf_len, void *cookie);
 int rlc_tm_tx_build_pdu(rlc_entity_tm_t *tmtx, rlc_sdu_t **out_sdu, u16 pdu_size);
-u32 rlc_tm_tx_get_sdu_size(rlc_entity_tm_t *tmtx);
+u32 rlc_tm_tx_estimate_pdu_size(rlc_entity_tm_t *tmtx);
 int rlc_tm_tx_sdu_enqueue(rlc_entity_tm_t *tmtx, u8 *buf_ptr, u32 sdu_size, void *cookie);
 
 void rlc_um_init(rlc_entity_um_t *rlc_um, int sn_bits, u32 UM_Window_Size, u32 t_Reordering,
@@ -443,7 +437,7 @@ void rlc_um_init(rlc_entity_um_t *rlc_um, int sn_bits, u32 UM_Window_Size, u32 t
 int rlc_um_rx_process_pdu(rlc_entity_um_rx_t *umrx, u8 *buf_ptr, u32 buf_len, void *cookie);
 void rlc_um_rx_delivery_sdu(rlc_entity_um_rx_t *umrx, dllist_node_t *sdu_assembly_q);
 int rlc_um_tx_build_pdu(rlc_entity_um_tx_t *umtx, u8 *buf_ptr, u16 pdu_size);
-u32 rlc_um_tx_get_sdu_size(rlc_entity_um_tx_t *umtx);
+u32 rlc_um_tx_estimate_pdu_size(rlc_entity_um_tx_t *umtx);
 int rlc_um_tx_sdu_enqueue(rlc_entity_um_tx_t *umtx, u8 *buf_ptr, u32 sdu_size, void *cookie);
 void rlc_um_set_deliv_func(rlc_entity_um_t *rlc_um, void (*deliv_sdu)(struct rlc_entity_um_rx *, rlc_sdu_t *));
 int rlc_um_reestablish(rlc_entity_um_t *rlcum);
@@ -463,7 +457,7 @@ int rlc_am_tx_sdu_enqueue(rlc_entity_am_tx_t *amtx, u8 *buf_ptr, u32 sdu_size, v
 u32 rlc_am_tx_get_status_pdu_size(rlc_entity_am_tx_t *amtx);
 u32 rlc_am_tx_get_fresh_pdu_size(rlc_entity_am_tx_t *amtx);
 u32 rlc_am_tx_get_retx_pdu_size(rlc_entity_am_tx_t *amtx);
-u32 rlc_am_tx_get_sdu_size(rlc_entity_am_tx_t *amtx);
+u32 rlc_am_tx_estimate_pdu_size(rlc_entity_am_tx_t *amtx, u32 *out_pdu_size);
 int rlc_am_tx_build_pdu(rlc_entity_am_tx_t *amtx, u8 *buf_ptr, u16 pdu_size, void *cookie, u32 *pdu_type);
 int rlc_am_rx_process_pdu(rlc_entity_am_rx_t *amrx, u8 *buf_ptr, u32 buf_len, void *cookie);
 int rlc_am_trigger_status_report(rlc_entity_am_rx_t *amrx, rlc_entity_am_tx_t *amtx, u16 sn, int forced);

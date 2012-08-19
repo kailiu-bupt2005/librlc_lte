@@ -20,6 +20,9 @@
  *
  * @History
  * Phuuix Xiong, Create, 01-25-2011
+ * Phuuix Xiong, 07-08-2012
+ *    Rename rlc_um_tx_get_sdu_size to rlc_um_tx_estimate_pdu_size()
+ *    Fix a bug in rlc_um_reestablish()
  */
 #include <stdlib.h>
 #include <string.h>
@@ -78,7 +81,7 @@ void rlc_um_pdu_free(rlc_um_pdu_t *pdu)
 {
 	if(pdu)
 	{
-		pdu->refcnt --;
+		RLC_DEREF(pdu);
 		if(pdu->refcnt <= 0)
 		{
 			if(pdu->buf_free)
@@ -196,9 +199,9 @@ int rlc_um_tx_sdu_enqueue(rlc_entity_um_tx_t *umtx, u8 *buf_ptr, u32 sdu_size, v
 }
 
 /***********************************************************************************/
-/* Function : rlc_um_tx_get_sdu_size                                               */
+/* Function : rlc_um_tx_estimate_pdu_size                                               */
 /***********************************************************************************/
-/* Description : - Get available SDU size in tx queue                              */
+/* Description : - Estimate PDU size by checking tx queue                              */
 /*               - Called by MAC                                                   */
 /*                                                                                 */
 /*                                                                                 */
@@ -206,9 +209,9 @@ int rlc_um_tx_sdu_enqueue(rlc_entity_um_tx_t *umtx, u8 *buf_ptr, u32 sdu_size, v
 /*      Name            | io |       Description                                   */
 /* ---------------------|----|-----------------------------------------------------*/
 /*   umtx               | i  | RLC UM entity                                       */
-/*   Return             |    | Size of RLC SDU including RLC header                */
+/*   Return             |    | Size of RLC PDU                             */
 /***********************************************************************************/
-u32 rlc_um_tx_get_sdu_size(rlc_entity_um_tx_t *umtx)
+u32 rlc_um_tx_estimate_pdu_size(rlc_entity_um_tx_t *umtx)
 {
 	u32 head_len;
 	u32 li_len;
@@ -810,8 +813,6 @@ int rlc_um_reestablish(rlc_entity_um_t *rlcum)
 		{
 			ZLOG_DEBUG("Re-Establishment: Try to assembly RLC UM SDU from PDU: lcid=%d sn=%u.\n", umrx->logical_chan, sn);
 			rlc_um_rx_assemble_sdu(&umrx->sdu_assembly_q, umrx->pdu[sn]);
-
-			rlc_um_pdu_free(umrx->pdu[sn]);
 			umrx->pdu[sn] = NULL;
 		}
 		sn = RLC_MOD((sn + 1), (RLC_SN_MAX_10BITS+1));

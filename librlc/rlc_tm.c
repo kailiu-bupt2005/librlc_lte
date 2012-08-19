@@ -20,6 +20,8 @@
  *
  * @History
  * Phuuix Xiong, Create, 01-25-2011
+ * Phuuix Xiong, 07-08-2012
+ *    Rename rlc_um_tx_get_sdu_size to rlc_um_tx_estimate_pdu_size()
  */
 /*
  * rlc_tm.c: RLC TM entity code
@@ -137,9 +139,9 @@ int rlc_tm_tx_build_pdu(rlc_entity_tm_t *tmtx, rlc_sdu_t **out_sdu, u16 pdu_size
 }
 
 /***********************************************************************************/
-/* Function : rlc_tm_tx_get_sdu_size                                               */
+/* Function : rlc_tm_tx_estimate_pdu_size                                               */
 /***********************************************************************************/
-/* Description : - Get available SDU size in tx queue (the size of first SDU)      */
+/* Description : - Estimate PDU size by checking tx queue (the size of first SDU)      */
 /*               - Called by MAC                                                   */
 /*                                                                                 */
 /*                                                                                 */
@@ -147,9 +149,9 @@ int rlc_tm_tx_build_pdu(rlc_entity_tm_t *tmtx, rlc_sdu_t **out_sdu, u16 pdu_size
 /*      Name            | io |       Description                                   */
 /* ---------------------|----|-----------------------------------------------------*/
 /*   tmtx               | i  | RLC TM entity                                       */
-/*   Return             |    | Size of RLC SDU including RLC header                */
+/*   Return             |    | Size of RLC PDU               */
 /***********************************************************************************/
-u32 rlc_tm_tx_get_sdu_size(rlc_entity_tm_t *tmtx)
+u32 rlc_tm_tx_estimate_pdu_size(rlc_entity_tm_t *tmtx)
 {
 	rlc_sdu_t *sdu;
 	

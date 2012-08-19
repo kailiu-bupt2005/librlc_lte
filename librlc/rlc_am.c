@@ -26,6 +26,16 @@
  *
  * @History
  * Phuuix Xiong, Create, 01-25-2011
+ * Phuuix Xiong, 07-08-2012
+ *    - Update rlc_am_tx_get_sdu_size() to new rlc_am_tx_estimate_pdu_size(), 
+ *       this will facilitate RLC PDU mutiplexing in mac layer.
+ *    - Fix a bug in poll bit update
+ *    - Avoid assert after t_PollRetransmit expires; restart t_PollRetransmit when
+ *       a whole PDU is asked to retransmit and if poll bit is set.
+ *    - Trace enhancement
+ *    - Fix a bug in RLC_SN_LESS & RLC_SN_LESSTHAN
+ *    - Avoid memory leakage when RLC AM Reestablishment, fix crash of empty 
+ *       Retx queue
  */
 #include <stdlib.h>
 #include <string.h>
@@ -130,9 +140,19 @@ Upon expiry of t-PollRetransmit, the transmitting side of an AM RLC entity shall
 		{
 			if(amtx->txpdu[sn])
 			{
+				rlc_am_tx_pdu_ctrl_t *pdu_ctrl = amtx->txpdu[sn];
+				
 				/* add pdu_ctrl to ReTx queue: ascending on SN */
-				if(amtx->txpdu[sn]->node.next == NULL)
-					rlc_am_tx_add_retx(amtx, amtx->txpdu[sn]);
+				if(pdu_ctrl->node.next == NULL)
+				{
+					u32 maxso = pdu_ctrl->pdu_size - (pdu_ctrl->data_ptr - pdu_ctrl->buf_ptr);
+					pdu_ctrl->n_retransmit_seg = 1;
+					pdu_ctrl->retransmit_seg[0].lsf = 1;
+					pdu_ctrl->retransmit_seg[0].start_offset = 0;
+					pdu_ctrl->retransmit_seg[0].end_offset = maxso;
+					pdu_ctrl->retransmit_seg[0].pdu_size = pdu_ctrl->pdu_size;
+					rlc_am_tx_add_retx(amtx, pdu_ctrl);
+				}
 				
 				break;
 			}
@@ -657,32 +677,53 @@ u32 rlc_am_tx_get_fresh_pdu_size(rlc_entity_am_tx_t *amtx)
 	return RLC_MIN(pdu_size, 0xFFF0);
 }
 
-/* get avaible SDU size (including sizeof RLC header) in RLC AM entity:
- * 1) if there is STATUS PDU, return the size of status PDU;
- * 2) if there are PDUs in ReTx queue, return the size of waiting for ReTx part of 1st ReTx PDU;
- * 3) else return the total size of all SDUs in sdu queue.
- */
-u32 rlc_am_tx_get_sdu_size(rlc_entity_am_tx_t *amtx)
+/***********************************************************************************/
+/* Function : rlc_am_tx_estimate_pdu_size                                         */
+/***********************************************************************************/
+/* Description : - estimate the PDU size in RLC AM entity           */
+/*                                                                                 */
+/* Interface :                                                                     */
+/*      Name            | io |       Description                                   */
+/* ---------------------|----|-----------------------------------------------------*/
+/*   amtx               | i  | RLC AM entity                                       */
+/*   out_pdu_size    | i  | NULL or size of u32*3, to store the size for status PDU, */
+/*                                  Retx PDU and fresh PDU                                        */
+/*   Return             |    | 1) if there is STATUS PDU, return the size of status PDU;  */
+/*                                  2) if there are PDUs in ReTx queue, return the size of        */
+/*                                      waiting for ReTx part of 1st ReTx PDU;                        */
+/*                                  3) else return the total size of all SDUs in sdu queue.        */
+/***********************************************************************************/
+u32 rlc_am_tx_estimate_pdu_size(rlc_entity_am_tx_t *amtx, u32 *out_pdu_size)
 {
-	u32 pdu_size;
+	u32 status_pdu_size, retx_pdu_size, fresh_pdu_size, pdu_size;
 
 	/* status pdu first */
-	pdu_size = rlc_am_tx_get_status_pdu_size(amtx);
-	if(pdu_size)
-		return pdu_size;
+	status_pdu_size = rlc_am_tx_get_status_pdu_size(amtx);
 	
 	/* ReTx PDU second */
-	pdu_size = rlc_am_tx_get_retx_pdu_size(amtx);
-	if(pdu_size)
-		return pdu_size;
+	retx_pdu_size = rlc_am_tx_get_retx_pdu_size(amtx);
 
-	return rlc_am_tx_get_fresh_pdu_size(amtx);
+	/* fresh Tx PDU last */
+	fresh_pdu_size = rlc_am_tx_get_fresh_pdu_size(amtx);
+	
+	if(out_pdu_size)
+	{
+		out_pdu_size[0] = status_pdu_size;
+		out_pdu_size[1] = retx_pdu_size;
+		out_pdu_size[2] = fresh_pdu_size;
+	}
+
+	pdu_size = retx_pdu_size?retx_pdu_size:fresh_pdu_size;
+	pdu_size = status_pdu_size?status_pdu_size:pdu_size;
+	return pdu_size;
 }
 
 /* add pdu_ctrl to ReTx queue: ascending on SN */
 void rlc_am_tx_add_retx(rlc_entity_am_tx_t *amtx, rlc_am_tx_pdu_ctrl_t *pdu_ctrl)
 {
 	rlc_am_tx_pdu_ctrl_t *tmp_ctrl;
+
+	ZLOG_DEBUG("add lcid=%d sn=%d to ReTx queue\n", amtx->logical_chan, pdu_ctrl->sn);
 	
 	assert(pdu_ctrl->node.next == NULL);
 
@@ -732,6 +773,9 @@ int rlc_am_tx_build_status_pdu(rlc_entity_am_tx_t *amtx, rlc_entity_am_rx_t *amr
 	rlc_spdu_so_t soinfo[MAXINFO_NUM];
 	u8 *old_buf_ptr = buf_ptr;
 
+	if(amtx->status_pdu_triggered==0 || rlc_timer_is_running(&amtx->t_StatusProhibit))
+		return 0;
+	
 	if(pdu_size < sizeof(rlc_am_status_pdu_head_t))
 	{
 		ZLOG_WARN("lcid=%d pdu_size=%d is too small\n", amtx->logical_chan, pdu_size);
@@ -745,121 +789,117 @@ int rlc_am_tx_build_status_pdu(rlc_entity_am_tx_t *amtx, rlc_entity_am_rx_t *amr
 	 *  30 = size of (SOstart, Soend)
 	 *  42 = 12 + 30
 	 */
-	if(amtx->status_pdu_triggered && !rlc_timer_is_running(&amtx->t_StatusProhibit))
+	
+	/* 1) first round: build nack_sn info */
+	ack_sn = amrx->VR_MS;
+	sn = amrx->VR_R;
+	pdu_size_in_bits = 15;
+	while(sn != amrx->VR_MS && n_nacksn<MAXINFO_NUM)
 	{
-		/* 1) first round: build nack_sn info */
-		ack_sn = amrx->VR_MS;
-		sn = amrx->VR_R;
-		pdu_size_in_bits = 15;
-		while(sn != amrx->VR_MS && n_nacksn<MAXINFO_NUM)
+		pdu_ctrl = (rlc_am_rx_pdu_ctrl_t *)amrx->rxpdu[sn];
+		if(pdu_ctrl == NULL)
 		{
-			pdu_ctrl = (rlc_am_rx_pdu_ctrl_t *)amrx->rxpdu[sn];
-			if(pdu_ctrl == NULL)
+			if(pdu_size >= (pdu_size_in_bits+12+7)/8)
 			{
-				if(pdu_size >= (pdu_size_in_bits+12+7)/8)
+				pdu_size_in_bits += 12;
+				ninfo[n_nacksn].nacksn.nack_sn = sn;
+				ninfo[n_nacksn].nacksn.e1 = 1;
+				ninfo[n_nacksn].nacksn.e2 = 0;
+				n_nacksn ++;
+			}
+			else
+			{
+				/* no enough buffer to hold one NACK_SN */
+				ack_sn = sn;
+				break;
+			}
+		}
+		else if(!pdu_ctrl->is_intact)
+		{
+			n_miss = rlc_am_rx_get_n_miss_segment(amrx, pdu_ctrl, soinfo, MAXINFO_NUM);
+			if(pdu_size >= (pdu_size_in_bits+42*n_miss+7)/8)
+			{
+				pdu_size_in_bits += 42*n_miss;
+				for(i=0; i<n_miss; i++)
 				{
-					pdu_size_in_bits += 12;
 					ninfo[n_nacksn].nacksn.nack_sn = sn;
 					ninfo[n_nacksn].nacksn.e1 = 1;
-					ninfo[n_nacksn].nacksn.e2 = 0;
+					ninfo[n_nacksn].nacksn.e2 = 1;
+
+					ninfo[n_nacksn].so.sostart = soinfo[i].sostart;
+					ninfo[n_nacksn].so.soend = soinfo[i].soend;
 					n_nacksn ++;
-				}
-				else
-				{
-					/* no enough buffer to hold one NACK_SN */
-					ack_sn = sn;
-					break;
-				}
-			}
-			else if(!pdu_ctrl->is_intact)
-			{
-				n_miss = rlc_am_rx_get_n_miss_segment(amrx, pdu_ctrl, soinfo, MAXINFO_NUM);
-				if(pdu_size >= (pdu_size_in_bits+42*n_miss+7)/8)
-				{
-					pdu_size_in_bits += 42*n_miss;
-					for(i=0; i<n_miss; i++)
-					{
-						ninfo[n_nacksn].nacksn.nack_sn = sn;
-						ninfo[n_nacksn].nacksn.e1 = 1;
-						ninfo[n_nacksn].nacksn.e2 = 1;
-
-						ninfo[n_nacksn].so.sostart = soinfo[i].sostart;
-						ninfo[n_nacksn].so.soend = soinfo[i].soend;
-						n_nacksn ++;
-					}
-				}
-				else
-				{
-					/* no enough buffer to hold all segments of one NACK_SN */
-					ack_sn = sn;
-					break;
-				}
-			}
-
-			sn = RLC_MOD(sn+1, RLC_SN_MAX_10BITS+1);
-		}
-
-		/* set the last e1 to 0 */
-		if(n_nacksn)
-			ninfo[n_nacksn-1].nacksn.e1 = 0;
-
-		/* 2) second round: encoding PDU */
-		pdu_head->dc = RLC_AM_DC_CTRL_PDU;
-		pdu_head->cpt = 0;
-		pdu_head->e1 = (n_nacksn>0);
-		pdu_head->ack_sn = ack_sn;
-		
-		pdu_size_in_bits = 15;	//15 = size of head
-
-		for(i=0; i<n_nacksn; i++)
-		{
-			if(ninfo[i].nacksn.e2 == 0)
-			{
-				//12 = size of (NACK_SN,E1,E2) set
-				bitcpy((unsigned long *)buf_ptr, pdu_size_in_bits, (const unsigned long *)&ninfo[i].nacksn, 0, 12);
-				pdu_size_in_bits += 12;
-				if(pdu_size_in_bits >= 32)
-				{
-					buf_ptr += 4;
-					pdu_size_in_bits -= 32;
 				}
 			}
 			else
 			{
-				//12 = size of (NACK_SN,E1,E2) set
-				bitcpy((unsigned long *)buf_ptr, pdu_size_in_bits, (const unsigned long *)&ninfo[i].nacksn, 0, 12);
-				pdu_size_in_bits += 12;
-				if(pdu_size_in_bits >= 32)
-				{
-					buf_ptr += 4;
-					pdu_size_in_bits -= 32;
-				}
-				//30 = size of (SOstart, Soend)
-				bitcpy((unsigned long *)buf_ptr, pdu_size_in_bits, (const unsigned long *)&ninfo[i].so, 0, 30);
-				pdu_size_in_bits += 30;
-				if(pdu_size_in_bits >= 32)
-				{
-					buf_ptr += 4;
-					pdu_size_in_bits -= 32;
-				}
+				/* no enough buffer to hold all segments of one NACK_SN */
+				ack_sn = sn;
+				break;
 			}
 		}
 
-		ZLOG_DEBUG("lcid=%d ack_sn=%u n_nacksn=%u pdu_size_in_bits=%u nack_sn=(0x%x 0x%x 0x%x..)\n", 
-				amtx->logical_chan, ack_sn, n_nacksn, pdu_size_in_bits,
-				ninfo[0].nacksn.nack_sn | (ninfo[0].nacksn.e2 << 15),
-				ninfo[1].nacksn.nack_sn | (ninfo[1].nacksn.e2 << 15),
-				ninfo[2].nacksn.nack_sn | (ninfo[2].nacksn.e2 << 15));
-
-		/* start timer t_StatusProhibit */
-		amtx->status_pdu_triggered = 0;
-		ZLOG_DEBUG("start timer t_StatusProhibit: lcid=%d\n", amtx->logical_chan);
-		rlc_timer_start(&amtx->t_StatusProhibit);
-
-		return buf_ptr - old_buf_ptr + (pdu_size_in_bits+7)/8;
+		sn = RLC_MOD(sn+1, RLC_SN_MAX_10BITS+1);
 	}
 
-	return 0;
+	/* set the last e1 to 0 */
+	if(n_nacksn)
+		ninfo[n_nacksn-1].nacksn.e1 = 0;
+
+	/* 2) second round: encoding PDU */
+	pdu_head->dc = RLC_AM_DC_CTRL_PDU;
+	pdu_head->cpt = 0;
+	pdu_head->e1 = (n_nacksn>0);
+	pdu_head->ack_sn = ack_sn;
+	
+	pdu_size_in_bits = 15;	//15 = size of head
+
+	for(i=0; i<n_nacksn; i++)
+	{
+		if(ninfo[i].nacksn.e2 == 0)
+		{
+			//12 = size of (NACK_SN,E1,E2) set
+			bitcpy((unsigned long *)buf_ptr, pdu_size_in_bits, (const unsigned long *)&ninfo[i].nacksn, 0, 12);
+			pdu_size_in_bits += 12;
+			if(pdu_size_in_bits >= 32)
+			{
+				buf_ptr += 4;
+				pdu_size_in_bits -= 32;
+			}
+		}
+		else
+		{
+			//12 = size of (NACK_SN,E1,E2) set
+			bitcpy((unsigned long *)buf_ptr, pdu_size_in_bits, (const unsigned long *)&ninfo[i].nacksn, 0, 12);
+			pdu_size_in_bits += 12;
+			if(pdu_size_in_bits >= 32)
+			{
+				buf_ptr += 4;
+				pdu_size_in_bits -= 32;
+			}
+			//30 = size of (SOstart, Soend)
+			bitcpy((unsigned long *)buf_ptr, pdu_size_in_bits, (const unsigned long *)&ninfo[i].so, 0, 30);
+			pdu_size_in_bits += 30;
+			if(pdu_size_in_bits >= 32)
+			{
+				buf_ptr += 4;
+				pdu_size_in_bits -= 32;
+			}
+		}
+	}
+
+	ZLOG_DEBUG("lcid=%d ack_sn=%u n_nacksn=%u pdu_size_in_bits=%u nack_sn=(0x%x 0x%x 0x%x..)\n", 
+			amtx->logical_chan, ack_sn, n_nacksn, pdu_size_in_bits,
+			ninfo[0].nacksn.nack_sn | (ninfo[0].nacksn.e2 << 15),
+			ninfo[1].nacksn.nack_sn | (ninfo[1].nacksn.e2 << 15),
+			ninfo[2].nacksn.nack_sn | (ninfo[2].nacksn.e2 << 15));
+
+	/* start timer t_StatusProhibit */
+	amtx->status_pdu_triggered = 0;
+	ZLOG_DEBUG("start timer t_StatusProhibit: lcid=%d\n", amtx->logical_chan);
+	rlc_timer_start(&amtx->t_StatusProhibit);
+
+	return buf_ptr - old_buf_ptr + (pdu_size_in_bits+7)/8;
 }
 
 /* update poll bit */
@@ -906,8 +946,12 @@ int rlc_am_tx_update_poll(rlc_entity_am_tx_t *amtx, u16 is_retx, u16 data_size)
 /* when a poll bit is set for a PDU, this function is called */
 int rlc_am_tx_deliver_poll(rlc_entity_am_tx_t *amtx)
 {
-	if(amtx->poll_bit)
+	int poll_bit = amtx->poll_bit;
+	
+	if(poll_bit)
 	{
+		/* reset poll constants */
+		amtx->poll_bit = 0;
 		amtx->PDU_WITHOUT_POLL = 0;
 		amtx->BYTE_WITHOUT_POLL = 0;
 		
@@ -922,7 +966,7 @@ int rlc_am_tx_deliver_poll(rlc_entity_am_tx_t *amtx)
 		rlc_timer_start(&amtx->t_PollRetransmit);
 	}
 
-	return amtx->poll_bit;
+	return poll_bit;
 }
 
 /***********************************************************************************/
@@ -996,6 +1040,21 @@ int rlc_am_tx_build_retx_pdu(rlc_entity_am_tx_t *amtx, u8 *buf_ptr, u16 pdu_size
 		dllist_remove(&amtx->pdu_retx_q, &pdu_ctrl->node);
 		pdu_ctrl->n_retransmit_seg = 0;
 		pdu_ctrl->i_retransmit_seg = 0;
+
+		/* update the poll bit */
+		segment_head = (rlc_am_pdu_segment_head_t *)buf_ptr;
+		rlc_am_tx_update_poll(amtx, 1 /* is_retx */, data_size);
+		segment_head->p = rlc_am_tx_deliver_poll(amtx);
+
+		ZLOG_DEBUG("Retx build: lcid=%d sn=%u fi=%u n_li=%u li_s=(%u %u %u ..)\n", 
+			amtx->logical_chan, segment_head->sn, segment_head->fi, 
+			pdu_ctrl->n_li, 
+			pdu_ctrl->li_s[0], pdu_ctrl->li_s[1], pdu_ctrl->li_s[2]);
+	
+		ZLOG_DEBUG("after Retx build: lcid=%d pdu_size=%u poll=%d VT_A=%u VT_S=%u VT_MS=%u POLL_SN=%u\n", 
+			amtx->logical_chan, pdu_ctrl->pdu_size, segment_head->p, 
+			amtx->VT_A, amtx->VT_S, amtx->VT_MS, amtx->POLL_SN);
+	
 		return pdu_ctrl->pdu_size;
 	}
 
@@ -1284,8 +1343,8 @@ int rlc_am_tx_build_fresh_pdu(rlc_entity_am_tx_t *amtx, u8 *buf_ptr, u16 pdu_siz
 	rlc_am_tx_update_poll(amtx, 0, data_size);
 	pdu_head->p = rlc_am_tx_deliver_poll(amtx);
 
-	ZLOG_DEBUG("fresh build: lcid=%d fi=%u n_li=%u li_s=(%u %u %u ..)\n", 
-			amtx->logical_chan, pdu_head->fi, pdu_ctrl->n_li, 
+	ZLOG_DEBUG("fresh build: lcid=%d poll=%u fi=%u n_li=%u li_s=(%u %u %u ..)\n", 
+			amtx->logical_chan, pdu_head->p, pdu_head->fi, pdu_ctrl->n_li, 
 			pdu_ctrl->li_s[0], pdu_ctrl->li_s[1], pdu_ctrl->li_s[2]);
 	
 	ZLOG_DEBUG("after build: lcid=%d pdu_size=%u poll=%d VT_A=%u VT_S=%u VT_MS=%u POLL_SN=%u\n", 
@@ -1504,9 +1563,9 @@ int rlc_am_rx_process_status_pdu(rlc_entity_am_rx_t *amrx, u8 *buf_ptr, u32 buf_
 		}
 
 		/* check length of PDU */
-		if((bit_offset+7)/8 > buf_len)
+		if((buf_ptr-(u8 *)pdu_head) > buf_len)
 		{
-			ZLOG_WARN("invalid buf_len=%u, bit_offset=%u, lcid=%d\n", buf_len, bit_offset, amrx->logical_chan);
+			ZLOG_WARN("NACK info exceeds the buf_len=%u, lcid=%d\n", buf_len, amrx->logical_chan);
 			return -1;
 		}
 
@@ -2040,6 +2099,16 @@ int rlc_am_rx_process_pdu(rlc_entity_am_rx_t *amrx, u8 *buf_ptr, u32 buf_len, vo
 {
 	rlc_am_pdu_head_t *pdu_hdr;
 	int ret;
+
+	assert(amrx);
+	assert(buf_ptr);
+	
+	if(buf_len < 2)
+	{
+		ZLOG_DEBUG("lcid=%d buf_ptr=%p pdu_len=%d\n", amrx->logical_chan, buf_ptr, buf_len);
+		amrx->free_pdu(buf_ptr, cookie);
+		return -1;
+	}
 	
 	/* parse header */
 	pdu_hdr = (rlc_am_pdu_head_t *)buf_ptr;
@@ -2249,7 +2318,7 @@ int rlc_am_reestablish(rlc_entity_am_t *rlcam)
 
 	/* force reassemble SDU */
 	sn = amrx->VR_R;
-	while(RLC_SN_LESS(sn, amrx->VR_MR, (RLC_SN_MAX_10BITS+1)))
+	while(RLC_SN_LESS(sn, amrx->VR_H, (RLC_SN_MAX_10BITS+1)))
 	{
 		if(amrx->rxpdu[sn])
 		{
@@ -2286,7 +2355,7 @@ int rlc_am_reestablish(rlc_entity_am_t *rlcam)
 	
 	while(!DLLIST_EMPTY(&amtx->pdu_retx_q))
 	{
-		pdu_ctrl = (rlc_am_tx_pdu_ctrl_t *)(&amtx->pdu_retx_q.next);
+		pdu_ctrl = (rlc_am_tx_pdu_ctrl_t *)(amtx->pdu_retx_q.next);
 		dllist_remove(&amtx->pdu_retx_q, (dllist_node_t *)pdu_ctrl);
 	}
 
