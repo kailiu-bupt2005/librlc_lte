@@ -1,0 +1,86 @@
+This is a LTE RLC implementation which aligns to 3GPP spec 36.322-930.
+It aims to be a high quality and high performence RLC library and as well as 
+can be easily integrated into other third part code. For bit field cause, 
+now this code can only be run perfectly on Big-Endian platform.
+
+Phuuix Xiong <phuuix@163.com>
+
+**********************************************************************************
+To build the library:
+1) Find a Big-Endian machine. If you havn't a Big-Endian machine, Qemu for ARM/PPC
+   is a good substitute.
+2) Extract the code.
+3) Type "make" and three target is built out:
+   a) librlc.a
+   b) rlc_example -- one simple example
+   c) rlc_decoder -- a tools to decode RLC PDU, you can easily extend it to a MAC,
+      PDCP decoder, etc.
+
+**********************************************************************************
+This is a short descritions of APIs, hope to be helpful.
+General:
+  1) void rlc_init();
+  Before to call any others library functions, user should call it to initialize the RLC LTE library.
+  
+  2) void rlc_timer_push(u32 time);
+  User must call this function to indicate the library how much time has elapsed, then the library use it to maintain the internal RLC timers. The parameter "time" should have the same resolution as that of RLC timer, such as t_Reordering.
+
+RLC_AM:
+  1) void rlc_am_init(rlc_entity_am_t *rlc_am, 
+					u32 t_Reordering, 
+					u32 t_StatusPdu, 
+					u32 t_StatusProhibit, 
+					u32 t_PollRetransmit, 
+					u16 maxRetxThreshold,
+					u16 pollPDU,
+					u16 pollByte,
+					void (*free_pdu)(void *, void *),
+					void (*free_sdu)(void *, void *));
+  Init a RLC AM entity including Tx and Rx entity.
+  
+  2) int rlc_am_tx_sdu_enqueue(rlc_entity_am_tx_t *amtx, u8 *buf_ptr, u32 sdu_size, void *cookie);
+  Enqueue a RLC SDU. The SDU Buffer will be freed internally by calling amtx->free_sdu(buf_ptr, cookie) when this SDU has been completely built into RLC PDUs.
+  
+  3) u32 rlc_am_tx_estimate_pdu_size(rlc_entity_am_tx_t *amtx, u32 *out_pdu_size);
+  Estimate the size of available RLC PDU (including status PDU, re-transmit PDU and fresh PDU), see comments of this function.
+  
+  4) int rlc_am_tx_build_pdu(rlc_entity_am_tx_t *amtx, u8 *buf_ptr, u16 pdu_size, void *cookie, u32 *pdu_type);
+  Build an AM PDU, the "pdu_type" can be one of among Status PDU, ReTx PDU or Fresh PDU. If the "pdu_type" is Status PDU or ReTx PDU, it is up to user to free the PDU buffer; otherwise (Fresh PDU), library will call amtx->free_pdu(buf_ptr, cookie) to free it (eg. When the postive acknowledgement has been received from the peer).
+  
+  5) int rlc_am_rx_process_pdu(rlc_entity_am_rx_t *amrx, u8 *buf_ptr, u32 buf_len, void *cookie);
+  Process a RLC AM PDU. the PDU buffer will be freed internally by calling amrx->free_pdu(buf_ptr, cookie).
+  
+  6) void rlc_am_set_deliv_func(rlc_entity_am_t *rlc_am, void (*deliv_sdu)(struct rlc_entity_am_rx *, rlc_sdu_t *));
+  Set the callback function which deliver reassembled SDUs to Upper.
+  
+  7) void rlc_am_set_maxretx_func(rlc_entity_am_t *rlc_am, int (*max_retx)(struct rlc_entity_am_tx *, u32));
+  Set the callback function that is called when MAX retransmissions has been reached.
+  
+  8) int rlc_am_reestablish(rlc_entity_am_t *rlcam);
+  RLC AM Re-establishment.
+
+RLC_UM:
+  1) void rlc_um_init(rlc_entity_um_t *rlc_um, int sn_bits, u32 UM_Window_Size, u32 t_Reordering,
+		void (*free_pdu)(void *, void *), void (*free_sdu)(void *, void *));
+  Init a RLC UM entity including Tx and Rx entity.
+		
+  2) int rlc_um_tx_sdu_enqueue(rlc_entity_um_tx_t *umtx, u8 *buf_ptr, u32 sdu_size, void *cookie);
+  Enqueue a RLC SDU. The SDU Buffer will be freed internally by calling umtx->free_sdu(buf_ptr, cookie) when this SDU has been completely built into RLC PDUs.
+  
+  3) u32 rlc_um_tx_estimate_pdu_size(rlc_entity_um_tx_t *umtx);
+  Estimate the size of available RLC PDU (not the size of SDU in queue), see comments of this function.
+  
+  4) int rlc_um_tx_build_pdu(rlc_entity_um_tx_t *umtx, u8 *buf_ptr, u16 pdu_size);
+  Build an UM PDU, it is up to user to free the PDU buffer.
+  
+  5) int rlc_um_rx_process_pdu(rlc_entity_um_rx_t *umrx, u8 *buf_ptr, u32 buf_len, void *cookie);
+  Process a RLC UM PDU. the PDU buffer will be freed internally by calling umrx->free_pdu(buf_ptr, cookie).
+
+  6) void rlc_um_set_deliv_func(rlc_entity_um_t *rlc_um, void (*deliv_sdu)(struct rlc_entity_um_rx *, rlc_sdu_t *));
+  Set the callback function which deliver reassembled SDUs to Upper.
+  
+  7) int rlc_um_reestablish(rlc_entity_um_t *rlcum);
+  RLC UM Re-establishment.
+  
+RLC_TM:
+  Too simple to write something...
